@@ -1,4 +1,10 @@
-setwd("C:/Users/mlara/Desktop/BD&ML/Problem sets/Problem Set 2/Data") #cargo directorio de trabajo donde están los datos
+# Limpio mi lugar de trabajo
+rm(list=ls())
+
+# Asigno un directorio donde me guarde los resultados: 
+setwd(choose.dir())
+
+#setwd("C:/Users/mlara/Desktop/BD&ML/Problem sets/Problem Set 2/Data") #cargo directorio de trabajo donde están los datos
 
 ##Cargamos paquetes necesarios
 require(pacman)

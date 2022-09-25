@@ -1,3 +1,14 @@
+#############################################################################
+#
+#              Big Data & Machine Learning for Applied Economics                   
+#                       Problem Set 2: Predicting Poverty
+#                                   Grupo: 
+#                      Paula Alarcón    Código: 201812516
+#                      Martín Lara      Código: 201711300
+#                      Nicolás González Código: 201813698
+#
+#############################################################################
+
 # Limpio mi lugar de trabajo
 rm(list=ls())
 

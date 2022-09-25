@@ -42,3 +42,13 @@ table(train_hogares$Pobre,train_hogares$Pobre_hand)
 
 train_hogares<- train_hogares %>% mutate(Pobre_hand_2=ifelse(Ingtotugarr<Lp*Npersug,1,0))
 table(train_hogares$Pobre,train_hogares$Pobre_hand_2)
+
+# Estadisticas Descriptivas:
+train_hogares<- train_hogares %>% mutate(Pobre_string=ifelse(Pobre==1,'Pobre','No pobre'))
+PieChart(Pobre_string, hole=0, values="%", data=train_hogares, fill=1:2, weights=train_hogares$fex_c, radius=1, main="")
+
+set.seed(1234)
+
+id=sample(1:nrow(train_hogares),size=nrow(train_hogares)*0.7)
+pre_train=train_hogares[id,] #Selecciona el 70% de las filas
+pre_test=train_hogares[-id,] #Selecciona el 30% restante de filas

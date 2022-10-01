@@ -84,21 +84,32 @@ var_hogar_test <-  test_personas %>% group_by(id) %>%
 
 test_hogares <- left_join(test_hogares, var_hogar_test, by = "id")
 
-train_hogares1 <- na.omit(train_hogares)
 colMeans(is.na(train_hogares))
+colMeans(is.na(test_hogares))
 
+train_hogares <- train_hogares[ ,-c(9, 10, 11)]
 
+train_hogares <- na.omit(train_hogares1)
 
-test_hogares <- ifelse(is.na(test_hogares$p_ocupa),0)
+test_hogares[is.na(test_hogares)]=0
 
 # Dividir bases de train y test dentro del train --------------------------
 
 set.seed(1234)
 
-partition <- createDataPartition(y = train_hogares$Ingtotugarr , p = 1/3)[[1]]
-pre_train <- 
-pre_test <- 
+partition_class <- createDataPartition(y = train_hogares$Pobre , p = 1/3)[[1]]
+pre_train_class <- train_hogares[partition_class,]
+pre_test_class <- train_hogares[-partition_class,]
   
+partition_reg <- createDataPartition(y = train_hogares$Ingpcug , p = 1/3)[[1]]
+pre_train_reg <- train_hogares[partition_reg,]
+pre_test_reg <- train_hogares[-partition_reg,]
+
+
+################################################################################
+################################################################################
+################################################################################
+
   
 fiveStats <- function(...) c(twoClassSummary(...), defaultSummary(...))
 control <- trainControl(method = "cv", number = 5,
@@ -107,73 +118,105 @@ control <- trainControl(method = "cv", number = 5,
                         verbose=FALSE,
                         savePredictions = T)
 
-# Modelos de Regresión ----------------------------------------------------
-
 regressControl  <- trainControl(method="repeatedcv",
                                 number = 4,
                                 repeats = 5) 
 
+
+# Modelos de Regresión ----------------------------------------------------
+
+
 regress <- train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et,
-                 data = train_hogares,
+                 data = pre_train_reg,
                  method  = "lm",
                  trControl = regressControl, 
                  tuneGrid  = expand.grid(intercept = FALSE))
 regress
+pre_test_reg$pred_regress <- predict(regress, pre_test_reg, type = "raw") %>% as.numeric()
 
-ridge<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et,
-             data = train_hogares,
+
+ridge<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa,
+             data = pre_train_reg,
              method = 'glmnet', 
              tuneGrid = expand.grid(alpha = 0, lambda = 1))
 ridge
+pre_test_reg$pred_ridge <- predict(ridge, pre_test_reg, type = "raw")
 
-lasso<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et + as.factor(P5000) + as.factor(P5010) + as.factor(P5090),
-             data = train_hogares,
+
+lasso<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et,
+             data = pre_train_reg,
              method = 'glmnet', 
              tuneGrid = expand.grid(alpha = 1, lambda = 1)) 
 lasso
+pre_test_reg$pred_lasso <- predict(lasso, pre_test_reg, type = "raw")
+
+################################################################################
+
+rmse_regress <- RMSE(pre_test_reg$pred_regress, pre_test_reg$Ingpcug)
+rmse_ridge <- RMSE(pre_test_reg$pred_ridge, pre_test_reg$Ingpcug)
+rmse_lasso <- RMSE(pre_test_reg$pred_lasso, pre_test_reg$Ingpcug)
 
 # Modelos de Clasificación ------------------------------------------------
-train_hogares <- train_hogares %>% 
+pre_train_class <- pre_train_class %>% 
   mutate(pobre_factor=factor(Pobre,levels=c(1,0),labels=c("pobre","no_pobre")) ,
          y_numeric=ifelse(Pobre==1, 1, 0) %>% as.numeric() , const=1) 
 
 model_class <- as.formula("pobre_factor ~ n_cotiza + n_ninis + n_ocupa + t_person_et")
 
 logit = train(model_class,
-              data=train_hogares,
+              data=pre_train_class,
               method="glm",
               trControl =  control,
               family = "binomial",preProcess = c("center", "scale"))
 logit
 
+pre_test_class$pred_logit <- predict(logit, pre_test_class, type = "raw")
 
 
-probit = train(Pobre ~ n_cotiza + n_ninis + n_ocupa  + t_person_et + P5090 + P5010,
-               data=train_hogares,
-               method="polr",
-               trControl =  control,
-               family = "binomial",
-               preProcess = c("center", "scale"))
-probit
+logit2 = train(pobre_factor ~ n_cotiza + n_ninis + n_ocupa + P5010 + P5090,
+              data=pre_train_class,
+              method="glm",
+              trControl =  control,
+              family = "binomial",
+              preProcess = c("center", "scale"))
+logit2
 
+pre_test_class$pred_logit2 <- predict(logit2, pre_test_class, type = "raw")
 
-set.seed(1234)
+################################################################################
 
-no_cores <- detectCores() - 1
+pre_test_class <- pre_test_class %>% mutate(pred_logit=ifelse(pred_logit=="pobre", 1, 0))
+pre_test_class <- pre_test_class %>% mutate(pred_logit2=ifelse(pred_logit2=="pobre", 1, 0))
 
-cl <- makePSOCKcluster(no_cores)
-registerDoParallel(cl)
+auc_logit <- auc(pre_test_class$pred_logit, pre_test_class$Pobre)
+auc_logit
+auc_logit2 <- auc(pre_test_class$pred_logit2, pre_test_class$Pobre)
+auc_logit2
 
-random_forest = train(pobre_factor ~ n_cotiza + n_ninis + n_ocupa,
-                      data=train_hogares,
-                      method="rf",
-                      trControl =  control,
-                      family = "binomial",
-                      preProcess = c("center", "scale"))
-stopCluster(cl)
-registerDoSEQ()
+Model_Metrics <- data.frame
 
-random_forest  
+Modelo <- c("Regresión", "Ridge (RMSE)", "Lasso (RMSE)", "Logit1 (AUC)", "Logit2 (AUC)")
+
+Stat <- c(rmse_regress, rmse_ridge, rmse_lasso, auc_logit, auc_logit2)
+
+Métricas <- data.frame(Modelo, Stat)
+
+#set.seed(1234)
+#no_cores <- detectCores() - 1
+#
+#cl <- makePSOCKcluster(no_cores)
+#registerDoParallel(cl)
+#
+#random_forest = train(pobre_factor ~ n_cotiza + n_ninis + n_ocupa,
+ #                     data=pre_train_class,
+  #                    method="rf",
+   #                   trControl =  control,
+    #                  family = "binomial",
+     #                 preProcess = c("center", "scale"))
+#stopCluster(cl)
+#registerDoSEQ()
+
+#random_forest  
   
 
 

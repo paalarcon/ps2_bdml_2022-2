@@ -1,0 +1,418 @@
+#############################################################################
+#
+#              Big Data & Machine Learning for Applied Economics                   
+#                       Problem Set 2: Predicting Poverty
+#                                   Grupo: 
+#                      Paula Alarcón    Código: 201812516
+#                      Martín Lara      Código: 201711300
+#                      Nicolás González Código: 201813698
+#
+#############################################################################
+
+# Limpio mi lugar de trabajo
+rm(list=ls())
+
+# Asigno un directorio donde me guarde los resultados: 
+setwd(choose.dir())
+
+#setwd("C:/Users/mlara/Desktop/BD&ML/Problem sets/Problem Set 2/Data") #cargo directorio de trabajo donde están los datos
+
+##Cargamos paquetes necesarios
+require(pacman)
+p_load(stargazer, tidyverse, ggplot2, MLmetrics, caret, here, broom, ISLR, GGally, modelr, cowplot, glmnet, rlang, purrr, boot, lessR, 
+       readr, readxl, ggthemes, VIM, rvest, heatmaply, plyr, dplyr, knitr, kableExtra, here, jtools, ggstance, broom, broom.mixed,
+       skimr, zoo, psych, lubridate, rio, ROCR, pROC, doParallel, parallel, randomForest )
+
+##Cargamos los datos desde el directorio de trabajo
+train_personas <- readRDS("train_personas.Rds")
+test_personas <- readRDS("test_personas.Rds")
+train_hogares <- readRDS("train_hogares.Rds")
+test_hogares <- readRDS("test_hogares.Rds")
+
+sum_ingresos<-train_personas %>% group_by(id) %>% summarize(Ingtot_hogar=sum(Ingtot,na.rm = TRUE)) 
+summary(sum_ingresos) 
+
+train_hogares<-left_join(train_hogares,sum_ingresos)
+colnames(train_hogares)
+
+head(train_hogares[c("id","Ingtotug","Ingtot_hogar")])
+table(train_hogares$Pobre)
+
+train_hogares<- train_hogares %>% mutate(Pobre_hand=ifelse(Ingpcug<Lp,1,0))
+table(train_hogares$Pobre,train_hogares$Pobre_hand)
+
+train_hogares<- train_hogares %>% mutate(Pobre_hand_2=ifelse(Ingtotugarr<Lp*Npersug,1,0))
+table(train_hogares$Pobre,train_hogares$Pobre_hand_2)
+
+# Estadisticas Descriptivas:
+train_hogares<- train_hogares %>% mutate(Pobre_string=ifelse(Pobre==1,'Pobre','No pobre'))
+PieChart(Pobre_string, hole=0, values="%", data=train_hogares, fill=1:2, weights=train_hogares$fex_c, radius=1, main="")
+
+
+#######################    Arreglamos la base Paula   ###################################
+#Train
+dt_cabecpersonas <- train_personas %>% subset(P6050==1)
+educanogen <- dt_cabecpersonas %>% group_by(id) %>% select(P6020, P6040, P6210s1)
+
+train_hogares2<-left_join(train_hogares,educanogen)
+colnames(train_hogares2)
+
+na_percentage <-sapply(train_hogares2, function(y) sum(length(which(is.na(y))))/length(train_hogares2$id))#creo una función para saber cuantos NAs hay por columna 
+data_x <- as.data.frame
+train_hogares2 <-  kNN(train_hogares2, variable = c("P6210s1"), k = 6)
+
+
+train_hogares2 <- mutate_at(train_hogares2, c("P5130", "P5140"), ~replace(., is.na(.), 0))
+
+train_hogares2 <- train_hogares2 %>% 
+  mutate(
+    arriendo = P5130+P5140,
+    fem = ifelse(P6020==2, 1, 0),
+    age2= P6040^2,
+    age3= P6040^3,
+    age4= P6040^6,
+    fem2=fem,
+    femage= P6040*fem,
+    femage2= femage^2,
+    pobrefem = Pobre*fem,
+    indigfem = Indigente*fem,
+  )
+
+train_hogaresfin <- train_hogares2 %>% select(arriendo, id, fem2, Dominio, P5000, P5010, P5090, Nper, Npersug, Ingtotug,Ingtotugarr, Ingpcug, Li, Lp, Pobre, Indigente, Fex_c, Ingtot_hogar, P6020, P6040, P6210s1_imp, Pobre_hand, Pobre_hand_2,age2, age3, age4,femage, femage2, pobrefem, indigfem)
+
+#Test
+
+dt_cabecpersonastest <- test_personas %>% subset(P6050==1)
+educanogen <- dt_cabecpersonastest %>% group_by(id) %>% select(P6020, P6040, P6210s1)
+
+test_hogares2<-left_join(test_hogares,educanogen)
+colnames(test_hogares2)
+
+
+na_percentage <-sapply(test_hogares2, function(y) sum(length(which(is.na(y))))/length(test_hogares2$id))#creo una función para saber cuantos NAs hay por columna 
+data_x <- as.data.frame
+test_hogares2 <-  kNN(test_hogares2, variable = c("P6210s1"), k = 6)
+
+
+test_hogares2 <- mutate_at(test_hogares2, c("P5130", "P5140"), ~replace(., is.na(.), 0))
+
+test_hogares2 <- test_hogares2 %>% 
+  mutate(
+    arriendo = P5130+P5140,
+    fem = ifelse(P6020==2, 1, 0),
+    age2= P6040^2,
+    age3= P6040^3,
+    age4= P6040^6,
+    fem2=fem,
+    femage= P6040*fem,
+    femage2= femage^2,
+  )
+
+test_hogaresfin <- train_hogares2 %>% select(arriendo, id, fem2, Dominio, P5000, P5010, P5090, Nper, Npersug, Li, Lp, Fex_c, P6040, P6210s1_imp, Pobre_hand, Pobre_hand_2,age2, age3, age4,femage, femage2)
+
+
+
+###################       Merge de datasets train y test  Martín    ########################
+train_hogares <- train_hogares %>% subset(select = c("Ingpcug","Pobre",colnames(test_hogares)))
+train_personas <- train_personas %>% subset(select = c("Ingtot",colnames(test_personas)))
+
+detach("package:dplyr", unload = TRUE)
+library(dplyr)
+
+var_hogar = train_personas %>% group_by(id) %>%
+  mutate(conteo=1,
+         nini=ifelse(P6040>=18 & is.na(Oc),1,0),
+         et=ifelse(P6040>=12 & P6040<=64,1,0),
+         cotiza=ifelse(P6090==1, 1, 0))%>% 
+  summarize(n_ocupa=sum(Oc,na.rm=T),
+            t_person_et=sum(et,na.rm=T),
+            t_personas=sum(conteo),
+            p_ocupa=n_ocupa/t_person_et,
+            n_ninis=sum(nini,na.rm=T),
+            n_cotiza=sum(cotiza, na.rm=T))
+
+train_hogares <- left_join(train_hogares, var_hogar, by = "id")
+
+var_hogar_test <-  test_personas %>% group_by(id) %>%
+  mutate(conteo=1,
+         nini=ifelse(P6040>=18 & is.na(Oc),1,0),
+         et=ifelse(P6040>=12 & P6040<=64,1,0),
+         cotiza=ifelse(P6090==1, 1, 0)) %>% 
+  summarize(n_ocupa=sum(Oc,na.rm=T),
+            t_person_et=sum(et,na.rm=T),
+            t_personas=sum(conteo),
+            p_ocupa=n_ocupa/t_person_et,
+            n_ninis=sum(nini,na.rm=T),
+            n_cotiza=sum(cotiza, na.rm=T))
+
+test_hogares <- left_join(test_hogares, var_hogar_test, by = "id")
+
+colMeans(is.na(train_hogares))
+colMeans(is.na(test_hogares))
+
+train_hogares <- train_hogares[ ,-c(9, 10, 11)]
+
+train_hogares <- na.omit(train_hogares1)
+
+test_hogares[is.na(test_hogares)]=0
+
+train_hogares<-left_join(train_hogares,train_hogaresfin)
+test_hogares<-left_join(test_hogares,test_hogaresfin)
+
+
+#######     Separación   ####### 
+set.seed(1234)
+
+partition_c <- createDataPartition(y = train_hogares$Pobre , p = 1/3)[[1]]
+pre_train_c <- train_hogares[partition_c,]
+pre_test_c <- train_hogares[-partition_c,]
+
+partition_r <- createDataPartition(y = train_hogares$Ingpcug , p = 1/3)[[1]]
+pre_train_r <- train_hogares[partition_r,]
+pre_test_r <- train_hogares[-partition_r,]
+
+################################################################
+fiveStats <- function(...) c(twoClassSummary(...), defaultSummary(...))
+control <- trainControl(method = "cv", number = 5,
+                        summaryFunction = fiveStats, 
+                        classProbs = TRUE,
+                        verbose=FALSE,
+                        savePredictions = T)
+
+regressControl  <- trainControl(method="repeatedcv",
+                                number = 4,
+                                repeats = 5) 
+
+
+####################################     Modelos de Regresión - Regularización
+
+
+#1. Reg lineal -----------------------------------------------------------
+
+reglineal <- lm(Ingpcug ~ P5000 + P5010 + age2 + age3 + fem2 + femage + femage2 +
+                  P6040 + P6210s1_imp + n_ninis + n_ocupa + n_cotiza + t_person_et, data=pre_train_r)
+lineal_coef= reglineal %>% tidy(conf.int=TRUE)
+stargazer(reglineal, type = "text")
+
+predict(reglineal, pre_train_r)
+
+y_hat_reglin_in <- predict(reglineal, pre_train_r, type="response")
+y_hat_reglin_out <- predict(reglineal, pre_test_r, type="response")
+
+rmse_in1 <- RMSE (y_hat_reglin_in, pre_train$Ingpcug)
+rmse_out1 <- RMSE(y_hat_reglin_out, pre_test$Ingpcug)
+
+resultados <- rbind(data.frame(Modelo = "Regresión lineal", 
+                   Muestra = "Fuera",
+                   RMSE = rmse_out1))
+
+
+#2. Lasso
+
+pretrain_ing = pre_train_r$Ingpcug
+pretrain_mtx = model.matrix(Ingpcug ~ n_ninis + n_ocupa + n_cotiza + t_person_et + arriendo +P5000 + P5010 + age2 + age3 + age4 + fem2 + femage + femage2 +
+                              P6040 + P6210s1_imp, data = pre_train_r)
+
+#Elección lambda óptimo con Cross-Validation
+
+lasso_cv=cv.glmnet(x=pretrain_mtx,y=pretrain_ing,alpha=1, standardize = T)
+lasso_=cv
+lasso_cv %>% glance()
+lasso_lambda_opt = lasso_cv$lambda.min
+
+lasso<-train(Ingpcug ~ P5000 + P5010 + age2 + age3 + age4 + fem2 + femage + femage2 +
+               P6040 + P6210s1_imp,
+             data = pre_train_r,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 1, lambda = lasso_cv$lambda.min),
+             standardize = T) 
+
+pre_test_r$pred_lasso <- predict(lasso, pre_test_r, type = "raw")
+rmse_out2 <- RMSE(pre_test_r$pred_lasso, pre_test_r$Ingpcug)
+
+resultados2 <- data.frame(Modelo = "Lasso", 
+                          Muestra = "Fuera",
+                          RMSE = rmse_out2)
+
+
+#3. Ridge
+ridge.mod=glmnet(x=pretrain_mtx, 
+                 y=pretrain_ing, 
+                 alpha=0, 
+                 standardize = TRUE)
+
+
+#Lambda óptimo
+ridge_cv=cv.glmnet(x=pretrain_mtx,y=pretrain_ing,alpha=0, standardize = T)
+ridge_lambda_opt = ridge_cv$lambda.min
+
+ridge<-train(Ingpcug ~ P5000 + P5010 + age2 + age3 + age4 + fem2 + femage + femage2 +
+               P6040 + P6210s1_imp,
+             data = pre_train_r,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 0, lambda = ridge_cv$lambda.min),
+             standardize = T)
+
+
+pre_test_r$pred_ridge <- predict(ridge, pre_test_r, type = "raw")
+
+rmse_out3 <- RMSE(pre_test_r$pred_ridge, pre_test_r$Ingpcug)
+
+resultados3 <-  rbind(data.frame(Modelo = "Ridge", 
+                                 Muestra = "Fuera",
+                                 RMSE = rmse_out3))
+
+
+#4. Elastic Net
+
+elastic.mod=glmnet(x=pretrain_mtx, 
+                   y=pretrain_ing, 
+                   alpha=0.5, 
+                   standardize = TRUE)
+
+#Lambda óptimo
+elastic_cv=cv.glmnet(x=pretrain_mtx,y=pretrain_ing,alpha=0.5, standardize = T)
+elastic_lambda_opt = elastic_cv$lambda.min
+
+elasticnet<-train(Ingpcug ~ P5000 + P5010 + age2 + age3 + age4 + fem2 + femage + femage2 +
+                    P6040 + P6210s1_imp,
+                  data = pre_train_r,
+                  method = 'glmnet', 
+                  tuneGrid = expand.grid(alpha = 0, lambda = elastic_cv$lambda.min))
+
+pre_test_r$pred_elastic <- predict(elasticnet, pre_test_r, type = "raw")
+
+rmse_out4 <- RMSE(pre_test_r$pred_elastic, pre_test$Ingpcug)
+
+resultados4 <- rbind(data.frame(Modelo = "Elastic Net", 
+                                Muestra = "Fuera",
+                                RMSE = rmse_out4))
+
+
+#5. Reg lineal Martín
+regress <- train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et,
+                 data = pre_train_r,
+                 method  = "lm",
+                 trControl = regressControl, 
+                 tuneGrid  = expand.grid(intercept = FALSE))
+regress
+pre_test_r$pred_regress <- predict(regress, pre_test_r, type = "raw") %>% as.numeric()
+
+#6. Ridge Martin
+ridge<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa,
+             data = pre_train_r,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 0, lambda = 1))
+ridge
+pre_test_r$pred_ridge <- predict(ridge, pre_test_r, type = "raw")
+
+#7. Lasso Martín
+lasso<-train(Ingpcug ~ n_cotiza + n_ninis + n_ocupa + t_person_et,
+             data = pre_train_r,
+             method = 'glmnet', 
+             tuneGrid = expand.grid(alpha = 1, lambda = 1)) 
+lasso
+pre_test_r$pred_lasso <- predict(lasso, pre_test_r, type = "raw")
+
+##RMSE
+rmse_regress <- RMSE(pre_test_r$pred_regress, pre_test_r$Ingpcug)
+rmse_ridge <- RMSE(pre_test_r$pred_ridge, pre_test_r$Ingpcug)
+rmse_lasso <- RMSE(pre_test_r$pred_lasso, pre_test_r$Ingpcug)
+
+resultados5 <- rbind(data.frame(Modelo = "Reg Lineal 2", 
+                                Muestra = "Fuera",
+                                RMSE = rmse_regress))
+
+resultados6 <- rbind(data.frame(Modelo = "Ridge 2", 
+                                Muestra = "Fuera",
+                                RMSE = rmse_ridge))         
+
+resultados7 <- rbind(data.frame(Modelo = "Lasso 2", 
+                                Muestra = "Fuera",
+                                RMSE = rmse_lasso))                     
+
+resultadosfinales <- rbind(resultados, resultados2, resultados3, resultados4, resultados5, resultados6, resultados7)
+View(resultadosfinales)
+
+
+###################      Clasificación      ###################
+
+pre_train_c <- pre_train_c %>% 
+  mutate(pobre_factor=factor(Pobre,levels=c(1,0),labels=c("pobre","no_pobre")) ,
+         y_numeric=ifelse(Pobre==1, 1, 0) %>% as.numeric() , const=1) 
+
+model_class <- as.formula("pobre_factor ~ n_cotiza + n_ninis + n_ocupa + t_person_et")
+
+##Logit1
+
+logit = train(model_class,
+              data=pre_train_c,
+              method="glm",
+              trControl =  control,
+              family = "binomial",preProcess = c("center", "scale"))
+logit
+
+pre_test_c$pred_logit <- predict(logit, pre_test_c, type = "raw")
+pre_test_c <- pre_test_c %>% mutate(pred_logit=ifelse(pred_logit=="pobre", 1, 0))
+
+auc_logit <- auc(pre_test_c$pred_logit, pre_test_c$Pobre)
+auc_logit
+
+##Logit2
+
+logit2 = train(pobre_factor ~ n_cotiza + n_ninis + n_ocupa + P5010 + P5090,
+               data=pre_train_c,
+               method="glm",
+               trControl =  control,
+               family = "binomial",
+               preProcess = c("center", "scale"))
+logit2
+
+pre_test_c$pred_logit2 <- predict(logit2, pre_test_c, type = "raw")
+pre_test_c <- pre_test_c %>% mutate(pred_logit2=ifelse(pred_logit2=="pobre", 1, 0))
+
+
+auc_logit2 <- auc(pre_test_c$pred_logit2, pre_test_c$Pobre)
+auc_logit2
+
+##########Intento Paula
+
+#Probit
+
+model <- as.formula("pobre_factor ~ P5000 + P5010 + age2 + fem2 + femage +
+               P6040 + P6210s1_imp + Ingpcug+Lp + n_ninis + n_ocupa + n_cotiza + t_person_et")
+
+probit <- glm(model , family=binomial(link="probit") , data=pre_train_c)
+pre_test_c$pred_probit <- predict(probit, pre_test_c, type = "link")
+pre_test_c <- pre_test_c %>% mutate(pred_logit=ifelse(pred_logit=="pobre", 1, 0))
+auc_probit <- auc(pre_test_c$pred_probit, pre_test_c$Pobre)
+auc_probit
+
+#Logit
+logit5 = train(model,
+               data=pre_train_c,
+               method="glm",
+               trControl =  control,
+               family = "binomial",
+               preProcess = c("center", "scale"))
+logit5
+
+pre_test_c$pred_logit5 <- predict(logit5, pre_test_c, type = "raw")
+pre_test_c <- pre_test_c %>% mutate(pred_logit5=ifelse(pred_logit5=="pobre", 1, 0))
+
+
+auc_logit5 <- auc(pre_test_c$pred_logit5, pre_test_c$Pobre)
+auc_logit5
+
+
+##Comparaciones
+
+Model_Metrics <- data.frame
+
+Modelo <- c("Logit1 (AUC)", "Logit2 (AUC)", "Logit5 (AUC)", "Probit (AUC)")
+
+Stat <- c(auc_logit, auc_logit2, auc_logit5, auc_probit)
+
+Métricas <- data.frame(Modelo, Stat)
+
+View(Métricas)
